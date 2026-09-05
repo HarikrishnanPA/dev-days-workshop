@@ -1,58 +1,67 @@
-const { spawnSync } = require('child_process');
-const { join } = require('path');
-const fs = require('fs');
+async function run() {
+  const [{ spawnSync }, { dirname, join }, fs] = await Promise.all([
+    import('node:child_process'),
+    import('node:path'),
+    import('node:fs'),
+  ]);
 
-function findBundledNode() {
-  const home = process.env.USERPROFILE || process.env.HOME;
-  if (!home) return null;
-  const copilotDir = join(home, '.copilot');
-  if (!fs.existsSync(copilotDir)) return null;
+  function findBundledNode() {
+    const home = process.env.USERPROFILE || process.env.HOME;
+    if (!home) return null;
+    const copilotDir = join(home, '.copilot');
+    if (!fs.existsSync(copilotDir)) return null;
 
-  try {
-    const entries = fs.readdirSync(copilotDir, { withFileTypes: true });
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const sub = join(copilotDir, e.name);
-      const subEntries = fs.readdirSync(sub, { withFileTypes: true });
-      for (const s of subEntries) {
-        if (!s.isDirectory()) continue;
-        const candidate = join(sub, s.name, process.platform === 'win32' ? 'node.exe' : 'bin/node');
+    try {
+      const entries = fs.readdirSync(copilotDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const sub = join(copilotDir, entry.name);
+        const subEntries = fs.readdirSync(sub, { withFileTypes: true });
+        for (const subEntry of subEntries) {
+          if (!subEntry.isDirectory()) continue;
+          const candidate = join(
+            sub,
+            subEntry.name,
+            process.platform === 'win32' ? 'node.exe' : 'bin/node',
+          );
+          if (fs.existsSync(candidate)) return candidate;
+        }
+        const candidate = join(
+          sub,
+          process.platform === 'win32' ? 'node.exe' : 'bin/node',
+        );
         if (fs.existsSync(candidate)) return candidate;
       }
-      const candidate2 = join(sub, process.platform === 'win32' ? 'node.exe' : 'bin/node');
-      if (fs.existsSync(candidate2)) return candidate2;
+    } catch {
+      return null;
     }
-  } catch (err) {
     return null;
   }
-  return null;
-}
 
-function runExec(command, args) {
-  const res = spawnSync(command, args || [], { stdio: 'inherit', shell: true });
-  return res.status;
-}
+  function runExec(command, args) {
+    const result = spawnSync(command, args || [], { stdio: 'inherit', shell: true });
+    return result.status;
+  }
 
-function runNodeScript(nodeExe, scriptPath, args) {
-  const res = spawnSync(nodeExe, [scriptPath].concat(args || []), { stdio: 'inherit' });
-  return res.status;
-}
+  function runNodeScript(nodeExe, scriptPath, args) {
+    const result = spawnSync(nodeExe, [scriptPath].concat(args || []), { stdio: 'inherit' });
+    return result.status;
+  }
 
-function findTsx(projectRoot) {
-  const binWin = join(projectRoot, 'node_modules', '.bin', 'tsx.cmd');
-  const binUnix = join(projectRoot, 'node_modules', '.bin', 'tsx');
-  if (fs.existsSync(binWin)) return { type: 'bin', path: binWin };
-  if (fs.existsSync(binUnix)) return { type: 'bin', path: binUnix };
+  function findTsx(projectRoot) {
+    const binWin = join(projectRoot, 'node_modules', '.bin', 'tsx.cmd');
+    const binUnix = join(projectRoot, 'node_modules', '.bin', 'tsx');
+    if (fs.existsSync(binWin)) return { type: 'bin', path: binWin };
+    if (fs.existsSync(binUnix)) return { type: 'bin', path: binUnix };
 
-  const cliCjs = join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.cjs');
-  const cliMjs = join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  if (fs.existsSync(cliCjs)) return { type: 'node', path: cliCjs };
-  if (fs.existsSync(cliMjs)) return { type: 'node', path: cliMjs };
+    const cliCjs = join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.cjs');
+    const cliMjs = join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+    if (fs.existsSync(cliCjs)) return { type: 'node', path: cliCjs };
+    if (fs.existsSync(cliMjs)) return { type: 'node', path: cliMjs };
 
-  return null;
-}
+    return null;
+  }
 
-function run() {
   const projectRoot = process.cwd();
   const tsx = findTsx(projectRoot);
   if (!tsx) {
@@ -61,7 +70,7 @@ function run() {
   }
 
   const nodeVersion = process.versions.node;
-  const [major, minor] = nodeVersion.split('.').map((v) => parseInt(v, 10) || 0);
+  const [major, minor] = nodeVersion.split('.').map((version) => parseInt(version, 10) || 0);
 
   let nodeToUse = process.execPath;
   if (major < 22 || (major === 22 && minor < 13)) {
@@ -69,14 +78,8 @@ function run() {
     if (bundled) {
       nodeToUse = bundled;
       console.log('Using bundled Node:', nodeToUse);
-      // Ensure child processes resolve `node` to the bundled executable by
-      // prepending its directory to PATH for the duration of the script.
-      try {
-        const nodeDir = require('path').dirname(nodeToUse);
-        process.env.PATH = nodeDir + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH || '');
-      } catch (e) {
-        // ignore
-      }
+      const nodeDir = dirname(nodeToUse);
+      process.env.PATH = nodeDir + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH || '');
     } else {
       console.warn('Current Node is too old and no bundled Node found. Attempting to run with current Node.');
     }
@@ -95,4 +98,7 @@ function run() {
   process.exit(code);
 }
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
